@@ -1,9 +1,8 @@
-'use strict';
+"use strict";
 
 // const { exec } = require('child_process');
-const AWS = require('aws-sdk');
-const BbPromise = require('bluebird');
-
+const AWS = require("aws-sdk");
+const BbPromise = require("bluebird");
 
 class ServerlessPlugin {
   constructor(serverless, options) {
@@ -15,94 +14,112 @@ class ServerlessPlugin {
 
     this.hooks = {
       //'after:aws:deploy:deploy:updateStack': this.updateVersionToSsm.bind(this)
-      'after:aws:deploy:deploy:updateStack': () => BbPromise.bind(this)
-                .then(this.updateVersionToSsm)
+      "after:aws:deploy:deploy:updateStack": () =>
+        BbPromise.bind(this).then(this.updateVersionToSsm),
     };
   }
 
   updateVersionToSsm() {
-    this.serverless.cli.log('SSM API version: Acquiring info...');
+    this.serverless.cli.log("SSM API version: Acquiring info...");
     const { stage, region } = this.options;
-    const provider = this.serverless.getProvider('aws');
+    const provider = this.serverless.getProvider("aws");
     const awsCredentials = provider.getCredentials();
     const SSM = new AWS.SSM({
       region,
-      credentials: awsCredentials.credentials
+      credentials: awsCredentials.credentials,
     });
 
-    const getSsmParameter = (name) => new Promise((resolve, reject) => {
-      var params = {
-        Name: name
-      };
-      SSM.getParameter(params, (err, data) => {
-        if (err) {
-          this.serverless.cli.log(`get Parameter err is '${err}'`);
-          resolve("");
-        }
-        else {
-          this.serverless.cli.log(`get Parameter res is`, JSON.stringify(data));
-          resolve(data.Parameter.Value);
-        }
+    const getSsmParameter = (name) =>
+      new Promise((resolve, reject) => {
+        var params = {
+          Name: name,
+        };
+        SSM.getParameter(params, (err, data) => {
+          if (err) {
+            this.serverless.cli.log(`get Parameter err is '${err}'`);
+            resolve("");
+          } else {
+            this.serverless.cli.log(
+              `get Parameter res is`,
+              JSON.stringify(data)
+            );
+            resolve(data.Parameter.Value);
+          }
+        });
       });
-    });
 
     const incrementVersion = (version) => {
       this.serverless.cli.log(`Current version is '${version}'`);
-      let currentDate = new Date();
-      const year = currentDate.getUTCFullYear()
-      const month = currentDate.getUTCMonth()
-      const date = currentDate.getUTCDate()
-      var newVersion = "".concat(year, ".", month, ".", date, ".", "0")
+      const currentDate = new Date();
+      const newVersionArr = [
+        currentDate.getUTCFullYear(),
+        currentDate.getUTCMonth() + 1,
+        currentDate.getUTCDate(),
+        0,
+      ];
+      let newVersion = newVersionArr.join(".");
       this.serverless.cli.log(`Default new version is '${newVersion}'`);
-      if (version && (typeof version === 'string' || version instanceof String) && version.includes('.')) {
-        let currentVersionArr = version.split('.')
-        if (year == currentVersionArr[0] && month == currentVersionArr[1] && date == currentVersionArr[2]) {
-          let dayIncrement = parseInt(currentVersionArr[3]) + 1
-          newVersion = "".concat(year, ".", month, ".", date, ".", dayIncrement)
+      if (
+        version &&
+        (typeof version === "string" || version instanceof String) &&
+        version.includes(".")
+      ) {
+        const currVersionArr = version.split(".");
+        if (
+          newVersionArr.slice(0, 3).join(".") ==
+          currVersionArr.slice(0, 3).join(".")
+        ) {
+          newVersionArr[3] = parseInt(currVersionArr[3]) + 1;
+          newVersion = newVersionArr.join(".");
           this.serverless.cli.log(`Incremented new version is '${newVersion}'`);
         }
       }
-      return newVersion
-    }
+      return newVersion;
+    };
 
-    const putSsmParameter = (name, value) => new Promise((resolve, reject) => {
-      var params = {
-        Name: name,
-        Type: 'String',
-        Value: value,
-        Overwrite: true
-      };
-      this.serverless.cli.log(`Incrementing SSM version`, name, value);
-      SSM.putParameter(params, (err, data) => {
-        if (err) { reject(err); }
-        else { 
-          resolve(data);
-         }
+    const putSsmParameter = (name, value) =>
+      new Promise((resolve, reject) => {
+        var params = {
+          Name: name,
+          Type: "String",
+          Value: value,
+          Overwrite: true,
+        };
+        this.serverless.cli.log(`Incrementing SSM version`, name, value);
+        SSM.putParameter(params, (err, data) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(data);
+          }
+        });
       });
-    });
 
-    const ssmPrefix = (this.serverless.service.custom
-      && this.serverless.service.custom.ssmApiVersion
-      && this.serverless.service.custom.ssmApiVersion.ssmPrefix)
-      ? this.serverless.service.custom.ssmApiVersion.ssmPrefix.replace(/<stage>/g, stage)
-      : `/app/${stage}/versions/`;
+    const ssmPrefix =
+      this.serverless.service.custom &&
+      this.serverless.service.custom.ssmApiVersion &&
+      this.serverless.service.custom.ssmApiVersion.ssmPrefix
+        ? this.serverless.service.custom.ssmApiVersion.ssmPrefix.replace(
+            /<stage>/g,
+            stage
+          )
+        : `/app/${stage}/versions/`;
     const ssmParameterName = ssmPrefix + this.serverless.service.service;
 
-    let promise = BbPromise.fromCallback(cb => {
-      getSsmParameter(ssmParameterName)
-      .then(value => {
+    let promise = BbPromise.fromCallback((cb) => {
+      getSsmParameter(ssmParameterName).then((value) => {
         this.serverless.cli.log(`SSM API version: current version`, value);
-        const incrementedVersion = incrementVersion(value.toString())
-        this.serverless.cli.log(`SSM API version: Updating new version '${incrementedVersion}' to SSM with key '${ssmParameterName}'`);
-        putSsmParameter(ssmParameterName, incrementedVersion)
-        .then(value => {
+        const incrementedVersion = incrementVersion(value.toString());
+        this.serverless.cli.log(
+          `SSM API version: Updating new version '${incrementedVersion}' to SSM with key '${ssmParameterName}'`
+        );
+        putSsmParameter(ssmParameterName, incrementedVersion).then((value) => {
           cb();
-        })
+        });
       });
     });
-    
-    return promise;
 
+    return promise;
   }
 }
 
